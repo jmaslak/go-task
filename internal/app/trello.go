@@ -22,9 +22,22 @@ func (a *App) TrelloSync(ctx context.Context) error {
 
 	client := trello.New(cfg.APIKey, cfg.Token, cfg.BaseURL)
 
+	// Trello is asked for the cards with the task directory unlocked: holding
+	// the lock across the network would keep every other task process out of
+	// the directory for as long as Trello took to answer, or for as long as
+	// it took to give up on Trello answering at all.
+	var fetched []listCards
+	for boardName, lists := range cfg.Tasks {
+		cards, err := fetchBoard(ctx, client, boardName, lists)
+		if err != nil {
+			return err
+		}
+		fetched = append(fetched, cards...)
+	}
+
 	return a.Store.WithLock(func() error {
-		for boardName, lists := range cfg.Tasks {
-			if err := a.syncBoard(ctx, client, boardName, lists); err != nil {
+		for _, list := range fetched {
+			if err := a.syncList(list.cards, list.tag); err != nil {
 				return err
 			}
 		}
@@ -33,22 +46,30 @@ func (a *App) TrelloSync(ctx context.Context) error {
 	})
 }
 
-// syncBoard mirrors the configured lists of one board.
-func (a *App) syncBoard(ctx context.Context, client *trello.Client, boardName string, lists map[string]string) error {
+// listCards are the cards of one configured Trello list, keyed by card ID,
+// along with the tag the list is mirrored under.
+type listCards struct {
+	tag   string
+	cards map[string]trello.Card
+}
+
+// fetchBoard collects the cards of the configured lists of one board.
+func fetchBoard(ctx context.Context, client *trello.Client, boardName string, lists map[string]string) ([]listCards, error) {
 	boardID, err := client.BoardID(ctx, boardName)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	boardLists, err := client.Lists(ctx, boardID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	boardCards, err := client.Cards(ctx, boardID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	var fetched []listCards
 	for listName, tag := range lists {
 		listID := ""
 		for _, list := range boardLists {
@@ -57,7 +78,7 @@ func (a *App) syncBoard(ctx context.Context, client *trello.Client, boardName st
 			}
 		}
 		if listID == "" {
-			return fmt.Errorf("list %q does not exist on Trello board %q", listName, boardName)
+			return nil, fmt.Errorf("list %q does not exist on Trello board %q", listName, boardName)
 		}
 
 		cards := map[string]trello.Card{}
@@ -67,12 +88,10 @@ func (a *App) syncBoard(ctx context.Context, client *trello.Client, boardName st
 			}
 		}
 
-		if err := a.syncList(cards, tag); err != nil {
-			return err
-		}
+		fetched = append(fetched, listCards{tag: tag, cards: cards})
 	}
 
-	return nil
+	return fetched, nil
 }
 
 // syncList reconciles the cards of one Trello list against the tasks carrying

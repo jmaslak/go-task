@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmaslak/go-task/internal/config"
 	"github.com/jmaslak/go-task/internal/task"
@@ -642,6 +644,98 @@ func TestNoteFromEditor(t *testing.T) {
 	tasks := mustTasks(t, a)
 	if want := []string{"What the user typed."}; !slices.Equal(noteTexts(tasks, 0), want) {
 		t.Errorf("notes = %v, want %v", noteTexts(tasks, 0), want)
+	}
+}
+
+// writeScript writes an executable shell script and returns the editor command
+// that runs it.
+func writeScript(t *testing.T, body string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "script")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path + " %FILENAME%"
+}
+
+// waitForFile waits for a file another process is expected to create.
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+
+	for range 200 {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("%s was never created", path)
+}
+
+// The editor takes as long as its user does, so the task directory must not be
+// locked while it runs: it used to be, which left every other task process -
+// a monitor included - waiting on the lock for as long as the editor was open.
+func TestEditorRunsWithoutTheLock(t *testing.T) {
+	a, _ := newTestApp(t, "y\n\n")
+	mustNewTask(t, a, "Subject Line")
+
+	signals := t.TempDir()
+	started := filepath.Join(signals, "started")
+	resume := filepath.Join(signals, "resume")
+	a.Config.EditorCommand = writeScript(t, fmt.Sprintf(
+		"printf '\\nWhat the user typed.\\n' >> \"$1\"\n"+
+			"touch %s\n"+
+			"until [ -f %s ]; do sleep 0.05; done\n", started, resume))
+
+	done := make(chan error, 1)
+	go func() { done <- a.AddNote(1, "") }()
+
+	waitForFile(t, started)
+	other := task.NewStore(a.Store.Dir())
+	if err := other.TryWithLock(func() error { return nil }); err != nil {
+		t.Errorf("the task directory was locked while the editor was open: %v", err)
+	}
+	if err := os.WriteFile(resume, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("AddNote returned error: %v", err)
+	}
+	if want := []string{"What the user typed."}; !slices.Equal(noteTexts(mustTasks(t, a), 0), want) {
+		t.Errorf("notes = %v, want %v", noteTexts(mustTasks(t, a), 0), want)
+	}
+}
+
+// With the lock released while the editor is open, another process can renumber
+// the tasks underneath it. The note must not land on whatever task ends up
+// wearing the number it was written for.
+func TestNoteRefusedWhenTheTaskChanged(t *testing.T) {
+	a, out := newTestApp(t, "y\n\n")
+	mustNewTask(t, a, "First")
+	mustNewTask(t, a, "Second")
+
+	// An editor that swaps the two tasks over, as another process would.
+	dir := a.Store.Dir()
+	a.Config.EditorCommand = writeScript(t, fmt.Sprintf(
+		"printf '\\nA note.\\n' >> \"$1\"\n"+
+			"cd %s\n"+
+			"mv 00001-none.task swapping\n"+
+			"mv 00002-none.task 00001-none.task\n"+
+			"mv swapping 00002-none.task\n", dir))
+
+	err := a.AddNote(1, "")
+	if err == nil || !strings.Contains(err.Error(), "no longer the task that was shown") {
+		t.Fatalf("AddNote error = %v, want a refusal naming the changed task", err)
+	}
+	if strings.Contains(out.String(), "Updated task") {
+		t.Errorf("output claimed the task was updated: %q", out)
+	}
+
+	for i, tasks := 0, mustTasks(t, a); i < len(tasks); i++ {
+		if len(tasks[i].Notes) != 0 {
+			t.Errorf("task %d gained a note", tasks[i].Number)
+		}
 	}
 }
 

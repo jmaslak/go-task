@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 // newTestStore returns a store over an empty temporary directory.
@@ -261,6 +262,24 @@ func TestVersionOneFilesAreUpgraded(t *testing.T) {
 	if written.ID.Cmp(id) != 0 {
 		t.Errorf("the file on disk has ID %s, want %s", written.ID, id)
 	}
+
+	// Reading one task on its own upgrades the file just the same, so that
+	// two reads of the same task cannot disagree about its ID.
+	other := NewStore(store.Dir())
+	if err := os.WriteFile(name, []byte("Title: Old\nCreated: 1437509667\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := other.Task(1)
+	if err != nil {
+		t.Fatalf("Task returned error: %v", err)
+	}
+	second, err := other.Task(1)
+	if err != nil {
+		t.Fatalf("Task returned error: %v", err)
+	}
+	if first.ID.Cmp(second.ID) != 0 {
+		t.Errorf("two reads gave IDs %s and %s", first.ID, second.ID)
+	}
 }
 
 func TestLockNests(t *testing.T) {
@@ -282,6 +301,99 @@ func TestLockNests(t *testing.T) {
 	}
 	if store.LockCount() != 0 {
 		t.Errorf("LockCount = %d, want 0", store.LockCount())
+	}
+}
+
+// A lock another process holds is given up on rather than waited out forever,
+// which is what left a monitor unable to answer a keystroke.
+func TestLockGivesUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), lockFileName)
+	held := newFileLock(path)
+	// A second lock on the same file stands in for a second process: the
+	// file lock goes with the open file, not with the process.
+	other := newFileLock(path)
+
+	if err := held.acquire(lockWait); err != nil {
+		t.Fatalf("acquire returned error: %v", err)
+	}
+
+	start := time.Now()
+	const wait = 100 * time.Millisecond
+	if err := other.acquire(wait); !errors.Is(err, ErrLocked) {
+		t.Errorf("acquire error = %v, want ErrLocked", err)
+	}
+	if waited := time.Since(start); waited < wait {
+		t.Errorf("acquire gave up after %v, want it to wait %v first", waited, wait)
+	}
+
+	// The lock this one already holds is taken again without waiting at all.
+	if err := held.acquire(0); err != nil {
+		t.Errorf("nested acquire returned error: %v", err)
+	}
+	if held.held() != 2 {
+		t.Errorf("held = %d, want 2", held.held())
+	}
+	for range 2 {
+		if err := held.release(); err != nil {
+			t.Fatalf("release returned error: %v", err)
+		}
+	}
+
+	// With the lock given up, the other one can have it.
+	if err := other.acquire(wait); err != nil {
+		t.Errorf("acquire returned error once the lock was free: %v", err)
+	}
+	if err := other.release(); err != nil {
+		t.Errorf("release returned error: %v", err)
+	}
+}
+
+func TestTryWithLock(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	other := NewStore(dir)
+
+	err := store.WithLock(func() error {
+		ran := false
+		err := other.TryWithLock(func() error {
+			ran = true
+			return nil
+		})
+		if !errors.Is(err, ErrLocked) {
+			t.Errorf("TryWithLock error = %v, want ErrLocked", err)
+		}
+		if ran {
+			t.Error("TryWithLock ran its function while another store held the lock")
+		}
+
+		// A lock this store already holds nests, as it does for WithLock.
+		return store.TryWithLock(func() error { return nil })
+	})
+	if err != nil {
+		t.Fatalf("WithLock returned error: %v", err)
+	}
+	if store.LockCount() != 0 {
+		t.Errorf("LockCount = %d, want 0", store.LockCount())
+	}
+}
+
+// Nothing read without the lock can be trusted afterwards, so a freshly taken
+// lock starts with nothing cached.
+func TestFreshLockDropsTheCache(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	other := NewStore(dir)
+
+	addTask(t, store, "First")
+	if got := titles(t, store); !slices.Equal(got, []string{"First"}) {
+		t.Fatalf("titles = %v", got)
+	}
+
+	// Another process adds a task while this store holds no lock.
+	addTask(t, other, "Second")
+
+	if got := titles(t, store); !slices.Equal(got, []string{"First", "Second"}) {
+		t.Errorf("titles = %v, want both tasks", got)
 	}
 }
 

@@ -232,6 +232,19 @@ are typing may no longer mean the task you meant. Run `task list` first.
 The check applies only when the input is a terminal, so scripts and cron jobs
 are unaffected.
 
+## Running more than one copy at once
+
+Changes to the task directory are made under a lock, so two copies of `task`
+cannot write over each other. The lock is held only for the reads and writes
+themselves: prompts, the editor, the pager, and Trello all run with the
+directory unlocked, so one copy sitting in an editor does not hold up another.
+
+A command that cannot have the directory within a couple of seconds says so and
+exits rather than waiting indefinitely. `monitor` never waits: a refresh that
+cannot read the directory keeps the listing it has, notes that it may be out of
+date, and picks the changes up on a later second. A keystroke still exits it
+whatever the other copies of `task` are doing.
+
 ## Configuration
 
 Configuration lives in `~/.task.yaml`, with a companion `~/.task.secret.yaml`

@@ -68,12 +68,26 @@ func (s *Store) Dir() string { return s.dir }
 func (s *Store) LockCount() int { return s.lock.held() }
 
 // WithLock runs f while holding the task directory lock, which keeps other
-// processes running the application out of the directory. Calls nest.
+// processes running the application out of the directory. Calls nest. A lock
+// another process is holding is waited on briefly and then reported as
+// ErrLocked, rather than waited on forever.
 func (s *Store) WithLock(f func() error) error {
+	return s.withLock(f, lockWait)
+}
+
+// TryWithLock runs f only if the task directory lock is free right now,
+// returning ErrLocked without running it if another process holds the
+// directory. It suits a caller that would rather carry on with what it already
+// knows than stop and wait, such as a display that refreshes on a timer.
+func (s *Store) TryWithLock(f func() error) error {
+	return s.withLock(f, 0)
+}
+
+func (s *Store) withLock(f func() error, wait time.Duration) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("could not create task directory: %w", err)
 	}
-	if err := s.lock.acquire(); err != nil {
+	if err := s.lock.acquire(wait); err != nil {
 		return err
 	}
 	defer func() {
@@ -81,6 +95,13 @@ func (s *Store) WithLock(f func() error) error {
 			panic(err)
 		}
 	}()
+
+	// Anything read while the lock was not held may have been changed by
+	// another process since, so a freshly taken lock starts with nothing
+	// cached.
+	if s.lock.held() == 1 {
+		s.invalidate()
+	}
 
 	return f()
 }
@@ -126,17 +147,20 @@ func (s *Store) Numbers() ([]int, error) {
 }
 
 // Tasks returns every open task, ordered by task number. The result is cached
-// until the store is changed.
+// for as long as the store holds the lock and nothing changes underneath it.
 func (s *Store) Tasks() ([]*Task, error) {
-	s.mu.Lock()
-	cached := s.cached
-	s.mu.Unlock()
-	if cached != nil {
-		return cached, nil
-	}
-
 	var tasks []*Task
 	err := s.WithLock(func() error {
+		// The cache is consulted with the lock held: a cache filled before
+		// the lock was taken says nothing about the directory now.
+		s.mu.Lock()
+		cached := s.cached
+		s.mu.Unlock()
+		if cached != nil {
+			tasks = cached
+			return nil
+		}
+
 		names, err := s.Filenames()
 		if err != nil {
 			return err
@@ -181,8 +205,18 @@ func (s *Store) Task(number int) (*Task, error) {
 		if err != nil {
 			return err
 		}
-		t, err = readTask(name)
-		return err
+		if t, err = readTask(name); err != nil {
+			return err
+		}
+
+		// A version 1 file gained an ID when it was read; write it back out
+		// so the ID sticks, as Tasks does. An ID that changed from one read
+		// to the next would be no use in telling one task from another.
+		if t.Version < FormatVersion {
+			t.Version = FormatVersion
+			return s.write(t)
+		}
+		return nil
 	})
 
 	return t, err
