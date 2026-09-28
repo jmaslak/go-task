@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jmaslak/go-task/internal/config"
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/config"
+	"github.com/jmaslak/go-task/task"
 )
 
 // Prompt fragments shared by every prompt the application shows.

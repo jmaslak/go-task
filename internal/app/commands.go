@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/task"
 )
 
 // ErrStaleTaskList reports that the task numbers this terminal last saw no

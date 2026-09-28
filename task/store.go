@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"io/fs"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,7 +29,8 @@ const lockFileName = ".taskview.lock"
 // the rest of the name, which is carried along when the task is renumbered.
 var taskFile = regexp.MustCompile(`^(\d+)(-.*\.task)$`)
 
-// ErrNotFound is returned for a task number that is not in the directory.
+// ErrNotFound is returned for a task number, or ID, that is not in the
+// directory.
 var ErrNotFound = errors.New("task not found")
 
 // Store is the directory of task files.
@@ -311,12 +314,46 @@ func (s *Store) Archive(number int) error {
 			return fmt.Errorf("could not create done directory: %w", err)
 		}
 
-		archived := fmt.Sprintf("%d-%05d-%d-%s.task", time.Now().Unix(), number, os.Getpid(), suffix)
-		if err := os.Rename(name, filepath.Join(done, archived)); err != nil {
+		// Two tasks archived in the same second, one renumbered into the
+		// other's place in between, would get the same name, and the rename
+		// would replace the first; so a taken name moves on a second. The
+		// lock keeps other processes from taking it in between.
+		var target string
+		for when := time.Now().Unix(); ; when++ {
+			target = filepath.Join(done, fmt.Sprintf("%d-%05d-%d-%s.task", when, number, os.Getpid(), suffix))
+			if _, err := os.Lstat(target); errors.Is(err, fs.ErrNotExist) {
+				break
+			} else if err != nil {
+				return err
+			}
+		}
+		if err := os.Rename(name, target); err != nil {
 			return err
 		}
 		s.invalidate()
 		return nil
+	})
+}
+
+// ArchiveByID closes the task with the given ID and renumbers the tasks left
+// behind, all under one hold of the lock. It suits a caller that showed the
+// task some time ago: numbers shift whenever another process closes or moves
+// a task, but the ID does not. ErrNotFound means no open task has the ID.
+func (s *Store) ArchiveByID(id *big.Int) error {
+	return s.WithLock(func() error {
+		tasks, err := s.Tasks()
+		if err != nil {
+			return err
+		}
+		for _, t := range tasks {
+			if id != nil && t.ID != nil && t.ID.Cmp(id) == 0 {
+				if err := s.Archive(t.Number); err != nil {
+					return err
+				}
+				return s.Coalesce()
+			}
+		}
+		return fmt.Errorf("task ID %s: %w", id, ErrNotFound)
 	})
 }
 

@@ -194,6 +194,59 @@ func TestArchive(t *testing.T) {
 	}
 }
 
+func TestArchiveByID(t *testing.T) {
+	store := newTestStore(t)
+	addTask(t, store, "one")
+	two := addTask(t, store, "two")
+	addTask(t, store, "three")
+
+	if err := store.ArchiveByID(two.ID); err != nil {
+		t.Fatalf("ArchiveByID returned error: %v", err)
+	}
+	if got, want := titles(t, store), []string{"one", "three"}; !slices.Equal(got, want) {
+		t.Errorf("titles = %v, want %v", got, want)
+	}
+	numbers, err := store.Numbers()
+	if err != nil {
+		t.Fatalf("Numbers returned error: %v", err)
+	}
+	if want := []int{1, 2}; !slices.Equal(numbers, want) {
+		t.Errorf("numbers = %v, want %v, renumbered", numbers, want)
+	}
+	done, err := os.ReadDir(filepath.Join(store.Dir(), doneDir))
+	if err != nil || len(done) != 1 {
+		t.Errorf("done directory holds %d files (%v), want 1", len(done), err)
+	}
+
+	if err := store.ArchiveByID(two.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("archiving it again returned %v, want ErrNotFound", err)
+	}
+	if err := store.ArchiveByID(nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("archiving a nil ID returned %v, want ErrNotFound", err)
+	}
+}
+
+func TestArchiveKeepsSameNamedTasks(t *testing.T) {
+	store := newTestStore(t)
+	one := addTask(t, store, "one")
+	two := addTask(t, store, "two")
+
+	// Archiving one renumbers two into its place, so both are archived as
+	// task 1, by this process, most likely within the same second.
+	for _, id := range [](*Task){one, two} {
+		if err := store.ArchiveByID(id.ID); err != nil {
+			t.Fatalf("ArchiveByID returned error: %v", err)
+		}
+	}
+	done, err := os.ReadDir(filepath.Join(store.Dir(), doneDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(done) != 2 {
+		t.Errorf("done directory holds %d files, want 2: one archive replaced the other", len(done))
+	}
+}
+
 func TestDelete(t *testing.T) {
 	store := newTestStore(t)
 	addTask(t, store, "First")

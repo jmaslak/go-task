@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jmaslak/go-task/internal/task"
-	"github.com/jmaslak/go-task/internal/trello"
+	"github.com/jmaslak/go-task/task"
+	"github.com/jmaslak/go-task/trello"
 )
 
 // TrelloSync mirrors the configured Trello lists into the task list. The sync

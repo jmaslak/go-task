@@ -91,3 +91,42 @@ func TestClientRejectsDuplicateBoardNames(t *testing.T) {
 		t.Error("BoardID returned no error for duplicate board names")
 	}
 }
+
+func TestCloseCard(t *testing.T) {
+	var method string
+	var query map[string][]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, query = r.Method, r.URL.Query()
+		switch r.URL.Path {
+		case "/1/cards/c1":
+			w.Write([]byte(`{"id":"c1","closed":true}`))
+		case "/1/cards/c2":
+			w.Write([]byte(`{"id":"c2","closed":false}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := New("the-key", "the-token", server.URL)
+	ctx := context.Background()
+
+	if err := client.CloseCard(ctx, "c1"); err != nil {
+		t.Fatalf("CloseCard returned error: %v", err)
+	}
+	if method != http.MethodPut {
+		t.Errorf("CloseCard used %s, want PUT", method)
+	}
+	for key, want := range map[string]string{"dueComplete": "true", "closed": "true", "key": "the-key", "token": "the-token"} {
+		if got := query[key]; len(got) != 1 || got[0] != want {
+			t.Errorf("CloseCard sent %s=%v, want %q", key, got, want)
+		}
+	}
+
+	if err := client.CloseCard(ctx, "c2"); err == nil {
+		t.Error("CloseCard returned no error for a card Trello did not archive")
+	}
+	if err := client.CloseCard(ctx, "missing"); err == nil {
+		t.Error("CloseCard returned no error for a card that does not exist")
+	}
+}

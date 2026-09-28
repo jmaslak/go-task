@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/task"
 )
 
 // ctrlL redraws the screen rather than exiting the monitor.

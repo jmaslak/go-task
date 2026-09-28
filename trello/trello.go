@@ -1,5 +1,6 @@
-// Package trello is a small read-only client for the Trello API, covering
-// what the task application needs to mirror cards as tasks.
+// Package trello is a small client for the Trello API, covering what the task
+// application needs to mirror cards as tasks and to close a card whose task
+// is done.
 package trello
 
 import (
@@ -106,21 +107,47 @@ func (c *Client) Cards(ctx context.Context, boardID string) ([]Card, error) {
 	return cards, err
 }
 
+// CloseCard marks a card's due date complete and archives the card, as is
+// done to a card whose task is finished. An archived card is no longer among
+// a board's cards, so the task mirroring it is not recreated by a sync.
+func (c *Client) CloseCard(ctx context.Context, cardID string) error {
+	query := url.Values{}
+	query.Set("dueComplete", "true")
+	query.Set("closed", "true")
+	query.Set("fields", "closed")
+	var card struct {
+		Closed bool `json:"closed"`
+	}
+	if err := c.do(ctx, http.MethodPut, "1/cards/"+url.PathEscape(cardID), query, &card); err != nil {
+		return err
+	}
+	if !card.Closed {
+		return fmt.Errorf("trello: card %s was not archived", cardID)
+	}
+	return nil
+}
+
 // get fetches one API endpoint and decodes the JSON response into out.
 func (c *Client) get(ctx context.Context, path string, fields []string, out any) error {
+	query := url.Values{}
+	query.Set("fields", strings.Join(fields, ","))
+	return c.do(ctx, http.MethodGet, path, query, out)
+}
+
+// do makes one API request, authenticated with the client's credentials, and
+// decodes the JSON response into out.
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, out any) error {
 	endpoint, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid Trello base URL: %w", err)
 	}
 	endpoint = endpoint.JoinPath(path)
 
-	query := url.Values{}
-	query.Set("fields", strings.Join(fields, ","))
 	query.Set("key", c.APIKey)
 	query.Set("token", c.Token)
 	endpoint.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), nil)
 	if err != nil {
 		return err
 	}

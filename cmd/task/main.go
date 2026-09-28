@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jmaslak/go-task/config"
 	"github.com/jmaslak/go-task/internal/app"
-	"github.com/jmaslak/go-task/internal/config"
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/task"
 )
 
 // version is the release this build came from.

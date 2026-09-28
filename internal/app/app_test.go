@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmaslak/go-task/internal/config"
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/config"
+	"github.com/jmaslak/go-task/task"
 )
 
 // newTestApp returns an application over an empty task directory, reading the

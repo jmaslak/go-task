@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/task"
 )
 
 // ctimeLayout renders a timestamp the way the C library's ctime does, which

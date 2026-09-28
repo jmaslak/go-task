@@ -245,6 +245,15 @@ cannot read the directory keeps the listing it has, notes that it may be out of
 date, and picks the changes up on a later second. A keystroke still exits it
 whatever the other copies of `task` are doing.
 
+## Using the task directory from other programs
+
+The `task`, `trello` and `config` packages are importable, so other programs
+can change the task directory the same way `task` does, under the same lock.
+`Store.ArchiveByID` closes a task found by its ID rather than its number,
+which suits a program that showed the task some time ago, and renumbers the
+tasks left behind. `trello.Client.CloseCard` marks a card's due date
+complete and archives it.
+
 ## Configuration
 
 Configuration lives in `~/.task.yaml`, with a companion `~/.task.secret.yaml`

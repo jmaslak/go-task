@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jmaslak/go-task/internal/config"
-	"github.com/jmaslak/go-task/internal/task"
+	"github.com/jmaslak/go-task/config"
+	"github.com/jmaslak/go-task/task"
 )
 
 // trelloServer serves a board holding the given cards.
