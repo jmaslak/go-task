@@ -17,7 +17,7 @@ import (
 )
 
 // version is the release this build came from.
-const version = "0.4.0"
+const version = "0.5.0"
 
 func main() {
 	if err := newRootCommand().Execute(); err != nil {
